@@ -124,7 +124,8 @@ void printStatistics(const Estimator &estimator, double t)
 void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
 {
     if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
-    {
+    {   
+        // It is the IMU pose (body frame) of the most recent frame (i.e., the current frame being processed).
         nav_msgs::Odometry odometry;
         odometry.header = header;
         odometry.header.frame_id = "world";
@@ -143,6 +144,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         odometry.twist.twist.linear.z = estimator.Vs[WINDOW_SIZE].z();
         pub_odometry.publish(odometry);
 
+        // This is the IMU (body) path
         geometry_msgs::PoseStamped pose_stamped;
         pose_stamped.header = header;
         pose_stamped.header.frame_id = "world";
@@ -213,6 +215,8 @@ void pubCameraPose(const Estimator &estimator, const std_msgs::Header &header)
 {
     int idx2 = WINDOW_SIZE - 1;
 
+    // For the most recently added frame
+    // Publishes the left camera's pose (and optionally the right camera's pose, if using stereo).
     if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
     {
         int i = idx2;
@@ -338,7 +342,8 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
     transform.setRotation(q);
     br.sendTransform(tf::StampedTransform(transform, header.stamp, "body", "camera"));
 
-    
+    // This block of code constructs and publishes a ROS nav_msgs::Odometry message that represents the extrinsic calibration
+    // between the IMU and the left camera in the VINS-Fusion system.
     nav_msgs::Odometry odometry;
     odometry.header = header;
     odometry.header.frame_id = "world";

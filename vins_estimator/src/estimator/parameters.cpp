@@ -159,6 +159,7 @@ void readParameters(std::string config_file)
 
     if(NUM_OF_CAM == 2)
     {
+        ROS_INFO("stereo camera");
         STEREO = 1;
         std::string cam1Calib;
         fsSettings["cam1_calib"] >> cam1Calib;

@@ -32,7 +32,10 @@ int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "vins_estimator");
 	ros::NodeHandle n("~");
-	ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+	// ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+	ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug);
+	ros::console::notifyLoggerLevelsChanged();
+
 
 	ros::Publisher pubLeftImage = n.advertise<sensor_msgs::Image>("/leftImage",1000);
 	ros::Publisher pubRightImage = n.advertise<sensor_msgs::Image>("/rightImage",1000);

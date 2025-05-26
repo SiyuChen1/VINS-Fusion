@@ -52,13 +52,21 @@ FeatureTracker::FeatureTracker()
     hasPrediction = false;
 }
 
+// Prevent new features from clustering around existing ones.
+// Prioritize keeping features that have been tracked for more frames (higher track_cnt).
+// Masking: Prevents new features from being detected too close to existing ones by drawing black circles (cv::circle) on a white mask.
+// Sorting: Ensures that the longest-tracked features are considered first (they get priority on the image).
+// Spatial diversity: Promotes a spread of features across the image for better robustness.
 void FeatureTracker::setMask()
-{
+{   
+    // Step 1: Initialize mask to all 255 (white)
     mask = cv::Mat(row, col, CV_8UC1, cv::Scalar(255));
 
+    // Step 2: Package current features with track counts and IDs
     // prefer to keep features that are tracked for long time
     vector<pair<int, pair<cv::Point2f, int>>> cnt_pts_id;
 
+    // Step 3: Sort features by track count (longer-tracked ones first)
     for (unsigned int i = 0; i < cur_pts.size(); i++)
         cnt_pts_id.push_back(make_pair(track_cnt[i], make_pair(cur_pts[i], ids[i])));
 
@@ -67,10 +75,12 @@ void FeatureTracker::setMask()
             return a.first > b.first;
          });
 
+    // Step 4: Clear current lists
     cur_pts.clear();
     ids.clear();
     track_cnt.clear();
 
+    // Step 5: Rebuild lists with non-overlapping features
     for (auto &it : cnt_pts_id)
     {
         if (mask.at<uchar>(it.second.first) == 255)
@@ -78,6 +88,8 @@ void FeatureTracker::setMask()
             cur_pts.push_back(it.second.first);
             ids.push_back(it.second.second);
             track_cnt.push_back(it.first);
+
+            // Mask out a circular region around this point
             cv::circle(mask, it.second.first, MIN_DIST, 0, -1);
         }
     }

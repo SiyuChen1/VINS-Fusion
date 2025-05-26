@@ -415,12 +415,12 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
     {
         marginalization_flag = MARGIN_OLD;
-        //printf("keyframe\n");
+        printf("keyframe\n");
     }
     else
     {
         marginalization_flag = MARGIN_SECOND_NEW;
-        //printf("non-keyframe\n");
+        printf("non-keyframe\n");
     }
 
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");

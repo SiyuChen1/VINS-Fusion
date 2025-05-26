@@ -113,6 +113,14 @@ class Estimator
     Matrix3d ric[2];
     Vector3d tic[2];
 
+    // Ps is an array of IMU (body) positions over the sliding window
+    // Rs is an array of IMU (body) orientations over the sliding window
+    // Vs is an array of IMU (body) velocities over the sliding window
+    // Bas is an array of IMU (body) accelerometer biases over the sliding window
+    // Bgs is an array of IMU (body) gyroscope biases over the sliding window
+
+    // Ps[0] to Ps[WINDOW_SIZE - 1] correspond to the keyframes in the sliding window.
+    // Ps[WINDOW_SIZE] is special — it holds the state of the newest frame, which has not yet become a keyframe and will possibly be marginalized next.
     Vector3d        Ps[(WINDOW_SIZE + 1)];
     Vector3d        Vs[(WINDOW_SIZE + 1)];
     Matrix3d        Rs[(WINDOW_SIZE + 1)];

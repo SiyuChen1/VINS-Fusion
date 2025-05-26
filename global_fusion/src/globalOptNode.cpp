@@ -81,6 +81,8 @@ void GPS_callback(const sensor_msgs::NavSatFixConstPtr &GPS_msg)
 void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
 {
     //printf("vio_callback! \n");
+    // This stores one pose per timestamp t, but not every incoming pose is guaranteed to be stored 
+    // if GPS fusion isn’t triggered for that timestamp
     double t = pose_msg->header.stamp.toSec();
     last_vio_t = t;
     Eigen::Vector3d vio_t(pose_msg->pose.pose.position.x, pose_msg->pose.pose.position.y, pose_msg->pose.pose.position.z);
@@ -94,7 +96,13 @@ void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
 
     m_buf.lock();
     while(!gpsQueue.empty())
-    {
+    {   
+        // Tries to find a GPS measurement within ±10ms of the VIO timestamp.
+        // If found and valid:
+        //      It fuses the GPS position with the VIO pose using globalEstimator.inputGPS().
+        //      This allows the system to correct for global drift.
+        // If not matched or too far out of sync, the GPS message is discarded or kept for next round.
+        // This is why not every VIO pose gets fused into the global path — only those with synced GPS are used.
         sensor_msgs::NavSatFixConstPtr GPS_msg = gpsQueue.front();
         double gps_t = GPS_msg->header.stamp.toSec();
         printf("vio t: %f, gps t: %f \n", t, gps_t);
@@ -122,10 +130,16 @@ void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
     }
     m_buf.unlock();
 
+    // Queries the current globally optimized pose (after fusion if GPS matched).
+    // This pose may include loop closure or GPS correction, depending on recent updates.
     Eigen::Vector3d global_t;
     Eigen:: Quaterniond global_q;
     globalEstimator.getGlobalOdom(global_t, global_q);
 
+    // pub_global_odometry: publishes the latest corrected global pose (nav_msgs::Odometry)
+    // pub_global_path: publishes the global trajectory so far (nav_msgs::Path), but it only grows when new fused poses are added (not every VIO frame).
+    // Again, the path only includes fused (key) poses, hence it's sparser than /odometry.
+    
     nav_msgs::Odometry odometry;
     odometry.header = pose_msg->header;
     odometry.header.frame_id = "world";
