@@ -45,6 +45,7 @@ int MIN_DIST;
 double F_THRESHOLD;
 int SHOW_TRACK;
 int FLOW_BACK;
+double GPS_SYNC_TOLERANCE;
 
 
 template <typename T>
@@ -195,6 +196,14 @@ void readParameters(std::string config_file)
         ESTIMATE_EXTRINSIC = 0;
         ESTIMATE_TD = 0;
         printf("no imu, fix extrinsic param; no time offset calibration\n");
+    }
+
+    // Check if key exists before reading
+    if (!fsSettings["gps_sync_tolerance"].empty()) {
+        GPS_SYNC_TOLERANCE = (double)fsSettings["gps_sync_tolerance"];
+        ROS_INFO("gps_sync_tolerance loaded: %.3f", GPS_SYNC_TOLERANCE);
+    } else {
+        ROS_WARN("gps_sync_tolerance not found in config file. Skipping.");
     }
 
     fsSettings.release();

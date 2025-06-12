@@ -14,6 +14,8 @@
 #include <map>
 #include <iostream>
 #include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include <thread>
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
@@ -33,6 +35,7 @@ public:
 	void inputGPS(double t, double latitude, double longitude, double altitude, double posAccuracy);
 	void inputOdom(double t, Eigen::Vector3d OdomP, Eigen::Quaterniond OdomQ);
 	void getGlobalOdom(Eigen::Vector3d &odomP, Eigen::Quaterniond &odomQ);
+	void shutdown();
 	nav_msgs::Path global_path;
 
 private:
@@ -45,7 +48,12 @@ private:
 	map<double, vector<double>> globalPoseMap;
 	map<double, vector<double>> GPSPositionMap;
 	bool initGPS;
+
+	// thread-safe operation on GPS values
+	std::mutex mtxGPS;
+	std::condition_variable cvGPS;
 	bool newGPS;
+
 	GeographicLib::LocalCartesian geoConverter;
 	std::mutex mPoseMap;
 	Eigen::Matrix4d WGPS_T_WVIO;
@@ -53,4 +61,5 @@ private:
 	Eigen::Quaterniond lastQ;
 	std::thread threadOpt;
 
+	std::atomic<bool>  shutting_down{false};
 };

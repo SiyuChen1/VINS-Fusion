@@ -21,7 +21,7 @@
 using namespace std;
 
 const double FOCAL_LENGTH = 460.0;
-const int WINDOW_SIZE = 10;
+const int WINDOW_SIZE = 30;
 const int NUM_OF_F = 1000;
 //#define UNIT_SPHERE_ERROR
 
@@ -63,6 +63,7 @@ extern int MIN_DIST;
 extern double F_THRESHOLD;
 extern int SHOW_TRACK;
 extern int FLOW_BACK;
+extern double GPS_SYNC_TOLERANCE;
 
 void readParameters(std::string config_file);
 

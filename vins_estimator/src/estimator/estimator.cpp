@@ -10,7 +10,7 @@
 #include "estimator.h"
 #include "../utility/visualization.h"
 
-Estimator::Estimator(): f_manager{Rs}
+Estimator::Estimator(): f_manager{Rs}, exit_flag(false)
 {
     ROS_INFO("init begins");
     initThreadFlag = false;
@@ -21,8 +21,10 @@ Estimator::~Estimator()
 {
     if (MULTIPLE_THREAD)
     {
-        processThread.join();
-        printf("join thread \n");
+        exit_flag = true;
+        if (processThread.joinable())
+            processThread.join();
+        ROS_INFO("Call deconstructor to join thread");
     }
 }
 
@@ -124,7 +126,7 @@ void Estimator::changeSensorType(int use_imu, int use_stereo)
     bool restart = false;
     mProcess.lock();
     if(!use_imu && !use_stereo)
-        printf("at least use two sensors! \n");
+        ROS_INFO("At least use two sensors!");
     else
     {
         if(USE_IMU != use_imu)
@@ -147,7 +149,7 @@ void Estimator::changeSensorType(int use_imu, int use_stereo)
         }
         
         STEREO = use_stereo;
-        printf("use imu %d use stereo %d\n", USE_IMU, STEREO);
+        ROS_INFO("use imu %d use stereo %d", USE_IMU, STEREO);
     }
     mProcess.unlock();
     if(restart)
@@ -163,10 +165,12 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
     TicToc featureTrackerTime;
 
+    // ROS_INFO("Before feature tracking: %3f", t);
     if(_img1.empty())
         featureFrame = featureTracker.trackImage(t, _img);
     else
         featureFrame = featureTracker.trackImage(t, _img, _img1);
+    // ROS_INFO("After feature tracking: %3f", t);
     //printf("featureTracker time: %f\n", featureTrackerTime.toc());
 
     if (SHOW_TRACK)
@@ -176,13 +180,17 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
     }
     
     if(MULTIPLE_THREAD)  
-    {     
-        if(inputImageCnt % 2 == 0)
-        {
-            mBuf.lock();
-            featureBuf.push(make_pair(t, featureFrame));
-            mBuf.unlock();
-        }
+    {
+        // // why downsample?
+        // if(inputImageCnt % 2 == 0)
+        // {
+        //     mBuf.lock();
+        //     featureBuf.push(make_pair(t, featureFrame));
+        //     mBuf.unlock();
+        // }
+        mBuf.lock();
+        featureBuf.push(make_pair(t, featureFrame));
+        mBuf.unlock();
     }
     else
     {
@@ -191,7 +199,7 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
         mBuf.unlock();
         TicToc processTime;
         processMeasurements();
-        printf("process time: %f\n", processTime.toc());
+        ROS_INFO("process time: %f\n", processTime.toc());
     }
     
 }
@@ -229,7 +237,7 @@ bool Estimator::getIMUInterval(double t0, double t1, vector<pair<double, Eigen::
 {
     if(accBuf.empty())
     {
-        printf("not receive imu\n");
+        ROS_INFO("Didn't receive imu data yet");
         return false;
     }
     //printf("get imu from %f %f\n", t0, t1);
@@ -253,7 +261,7 @@ bool Estimator::getIMUInterval(double t0, double t1, vector<pair<double, Eigen::
     }
     else
     {
-        printf("wait for imu\n");
+        ROS_INFO("Still waiting for imu\n");
         return false;
     }
     return true;
@@ -269,7 +277,7 @@ bool Estimator::IMUAvailable(double t)
 
 void Estimator::processMeasurements()
 {
-    while (1)
+    while (ros::ok() && !exit_flag)
     {
         //printf("process measurments\n");
         pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1> > > > > feature;
@@ -284,7 +292,7 @@ void Estimator::processMeasurements()
                     break;
                 else
                 {
-                    printf("wait for imu ... \n");
+                    ROS_INFO("Still waiting for imu ... ");
                     if (! MULTIPLE_THREAD)
                         return;
                     std::chrono::milliseconds dura(5);
@@ -315,6 +323,7 @@ void Estimator::processMeasurements()
                 }
             }
             mProcess.lock();
+            // ROS_INFO("Before process image: %3f", feature.first);
             processImage(feature.second, feature.first);
             prevTime = curTime;
 
@@ -344,7 +353,7 @@ void Estimator::processMeasurements()
 
 void Estimator::initFirstIMUPose(vector<pair<double, Eigen::Vector3d>> &accVector)
 {
-    printf("init first imu pose\n");
+    ROS_INFO("init first imu pose");
     initFirstPoseFlag = true;
     //return;
     Eigen::Vector3d averAcc(0, 0, 0);
@@ -354,7 +363,7 @@ void Estimator::initFirstIMUPose(vector<pair<double, Eigen::Vector3d>> &accVecto
         averAcc = averAcc + accVector[i].second;
     }
     averAcc = averAcc / n;
-    printf("averge acc %f %f %f\n", averAcc.x(), averAcc.y(), averAcc.z());
+    ROS_INFO("averge acc %f %f %f", averAcc.x(), averAcc.y(), averAcc.z());
     Matrix3d R0 = Utility::g2R(averAcc);
     double yaw = Utility::R2ypr(R0).x();
     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
@@ -410,17 +419,23 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
 
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header)
 {
+    if(last_header < 0){
+        last_header = header;
+    }else{
+        ROS_INFO("Time difference: %3f ms", (header - last_header) * 1000);
+        last_header = header;
+    }
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
     {
         marginalization_flag = MARGIN_OLD;
-        printf("keyframe\n");
+        ROS_INFO("keyframe comming");
     }
     else
     {
         marginalization_flag = MARGIN_SECOND_NEW;
-        printf("non-keyframe\n");
+        ROS_INFO("non-keyframe comming");
     }
 
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");

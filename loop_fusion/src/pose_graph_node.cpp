@@ -24,6 +24,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <variant>
 #include <eigen3/Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -35,7 +36,9 @@
 #define SKIP_FIRST_CNT 10
 using namespace std;
 
-queue<sensor_msgs::ImageConstPtr> image_buf;
+// queue<sensor_msgs::ImageConstPtr> image_buf;
+using ImageMsgVariant = std::variant<sensor_msgs::ImageConstPtr, sensor_msgs::CompressedImageConstPtr>;
+queue<ImageMsgVariant> image_buf;
 queue<sensor_msgs::PointCloudConstPtr> point_buf;
 queue<nav_msgs::Odometry::ConstPtr> pose_buf;
 queue<Eigen::Vector3d> odometry_buf;
@@ -56,6 +59,8 @@ int VISUALIZATION_SHIFT_Y;
 int ROW;
 int COL;
 int DEBUG_IMAGE;
+int USE_COMPRESSED_IMAGE = false; // whether to use compressed image topic
+int MAX_GAP_THRESHOLD;
 
 camodocal::CameraPtr m_camera;
 Eigen::Vector3d tic;
@@ -108,9 +113,29 @@ void image_callback(const sensor_msgs::ImageConstPtr &image_msg)
     // detect unstable camera stream
     if (last_image_time == -1)
         last_image_time = image_msg->header.stamp.toSec();
-    else if (image_msg->header.stamp.toSec() - last_image_time > 1.0 || image_msg->header.stamp.toSec() < last_image_time)
+    else if (image_msg->header.stamp.toSec() - last_image_time > MAX_GAP_THRESHOLD || image_msg->header.stamp.toSec() < last_image_time)
     {
         ROS_WARN("image discontinue! detect a new sequence!");
+        new_sequence();
+    }
+    last_image_time = image_msg->header.stamp.toSec();
+}
+
+void compressed_image_callback(const sensor_msgs::CompressedImageConstPtr &image_msg)
+{
+    ROS_DEBUG("Compressed image callback!");
+    m_buf.lock();
+    image_buf.push(image_msg);
+    m_buf.unlock();
+    //printf(" image time %f \n", image_msg->header.stamp.toSec());
+
+    // detect unstable camera stream
+    if (last_image_time == -1)
+        last_image_time = image_msg->header.stamp.toSec();
+    else if (image_msg->header.stamp.toSec() - last_image_time > MAX_GAP_THRESHOLD || image_msg->header.stamp.toSec() < last_image_time)
+    {
+        ROS_WARN("image discontinue! detect a new sequence!");
+        ROS_WARN("Time difference: %f seconds", image_msg->header.stamp.toSec() - last_image_time);
         new_sequence();
     }
     last_image_time = image_msg->header.stamp.toSec();
@@ -246,32 +271,36 @@ void process()
 {
     while (true)
     {
-        sensor_msgs::ImageConstPtr image_msg = NULL;
+        // sensor_msgs::ImageConstPtr image_msg = NULL;
+        std::variant<sensor_msgs::ImageConstPtr, sensor_msgs::CompressedImageConstPtr> image_msg;
         sensor_msgs::PointCloudConstPtr point_msg = NULL;
         nav_msgs::Odometry::ConstPtr pose_msg = NULL;
 
         // find out the messages with same time stamp
         m_buf.lock();
         if(!image_buf.empty() && !point_buf.empty() && !pose_buf.empty())
-        {
-            if (image_buf.front()->header.stamp.toSec() > pose_buf.front()->header.stamp.toSec())
+        {   
+            auto &front_variant = image_buf.front();
+            ros::Time image_stamp = std::visit([](auto&& msg) { return msg->header.stamp; }, front_variant);
+
+            if (image_stamp.toSec() > pose_buf.front()->header.stamp.toSec())
             {
                 pose_buf.pop();
-                printf("throw pose at beginning\n");
+                ROS_INFO("Throw pose at beginning because of POSE_BUF");
             }
-            else if (image_buf.front()->header.stamp.toSec() > point_buf.front()->header.stamp.toSec())
+            else if (image_stamp.toSec() > point_buf.front()->header.stamp.toSec())
             {
                 point_buf.pop();
-                printf("throw point at beginning\n");
+                printf("Throw point at beginning because of POINT_BUF\n");
             }
-            else if (image_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec() 
+            else if (std::visit([](auto&& msg) { return msg->header.stamp.toSec(); }, image_buf.back()) >= pose_buf.front()->header.stamp.toSec() 
                 && point_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec())
             {
                 pose_msg = pose_buf.front();
                 pose_buf.pop();
                 while (!pose_buf.empty())
                     pose_buf.pop();
-                while (image_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
+                while (std::visit([](auto&& msg) { return msg->header.stamp.toSec(); }, image_buf.front()) < pose_msg->header.stamp.toSec())
                     image_buf.pop();
                 image_msg = image_buf.front();
                 image_buf.pop();
@@ -306,23 +335,31 @@ void process()
                 skip_cnt = 0;
             }
 
-            cv_bridge::CvImageConstPtr ptr;
-            if (image_msg->encoding == "8UC1")
-            {
-                sensor_msgs::Image img;
-                img.header = image_msg->header;
-                img.height = image_msg->height;
-                img.width = image_msg->width;
-                img.is_bigendian = image_msg->is_bigendian;
-                img.step = image_msg->step;
-                img.data = image_msg->data;
-                img.encoding = "mono8";
-                ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);
-            }
-            else
-                ptr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::MONO8);
-            
-            cv::Mat image = ptr->image;
+            cv::Mat image;
+            std::visit([&image](auto&& msg) {
+                using T = std::decay_t<decltype(msg)>;
+                if constexpr (std::is_same_v<T, sensor_msgs::ImageConstPtr>) {
+                    cv_bridge::CvImageConstPtr ptr;
+                    if (msg->encoding == "8UC1") {
+                        sensor_msgs::Image img;
+                        img.header = msg->header;
+                        img.height = msg->height;
+                        img.width = msg->width;
+                        img.is_bigendian = msg->is_bigendian;
+                        img.step = msg->step;
+                        img.data = msg->data;
+                        img.encoding = "mono8";
+                        ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::MONO8);
+                    } else {
+                        ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::MONO8);
+                    }
+                    image = ptr->image;
+                } else if constexpr (std::is_same_v<T, sensor_msgs::CompressedImageConstPtr>) {
+                    cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::MONO8);
+                    image = cv_ptr->image.clone();
+                }
+            }, image_msg);
+
             // build keyframe
             Vector3d T = Vector3d(pose_msg->pose.pose.position.x,
                                   pose_msg->pose.pose.position.y,
@@ -433,6 +470,8 @@ int main(int argc, char **argv)
 
     ROW = fsSettings["image_height"];
     COL = fsSettings["image_width"];
+    USE_COMPRESSED_IMAGE = fsSettings["use_compressed_image"];
+    MAX_GAP_THRESHOLD = fsSettings["max_gap_threshold"];
     std::string pkg_path = ros::package::getPath("loop_fusion");
     string vocabulary_file = pkg_path + "/../support_files/brief_k10L6.bin";
     cout << "vocabulary_file" << vocabulary_file << endl;
@@ -479,7 +518,12 @@ int main(int argc, char **argv)
     }
 
     ros::Subscriber sub_vio = n.subscribe("/vins_estimator/odometry", 2000, vio_callback);
-    ros::Subscriber sub_image = n.subscribe(IMAGE_TOPIC, 2000, image_callback);
+    ros::Subscriber sub_image;
+    if (USE_COMPRESSED_IMAGE) {
+        sub_image = n.subscribe(IMAGE_TOPIC, 2000, compressed_image_callback);
+    } else {
+        sub_image = n.subscribe(IMAGE_TOPIC, 2000, image_callback);
+    }
     ros::Subscriber sub_pose = n.subscribe("/vins_estimator/keyframe_pose", 2000, pose_callback);
     ros::Subscriber sub_extrinsic = n.subscribe("/vins_estimator/extrinsic", 2000, extrinsic_callback);
     ros::Subscriber sub_point = n.subscribe("/vins_estimator/keyframe_point", 2000, point_callback);

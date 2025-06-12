@@ -111,14 +111,12 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     row = cur_img.rows;
     col = cur_img.cols;
     cv::Mat rightImg = _img1;
-    /*
     {
         cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
         clahe->apply(cur_img, cur_img);
         if(!rightImg.empty())
             clahe->apply(rightImg, rightImg);
     }
-    */
     cur_pts.clear();
 
     if (prev_pts.size() > 0)

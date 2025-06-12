@@ -182,4 +182,9 @@ class Estimator
 
     bool initFirstPoseFlag;
     bool initThreadFlag;
+
+    // for multiple thread control
+    std::atomic<bool> exit_flag;
+
+    double last_header = -1;
 };

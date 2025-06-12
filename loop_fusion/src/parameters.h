@@ -33,5 +33,7 @@ extern int ROW;
 extern int COL;
 extern std::string VINS_RESULT_PATH;
 extern int DEBUG_IMAGE;
+extern int USE_COMPRESSED_IMAGE;
+extern int MAX_GAP_THRESHOLD;
 
 

@@ -23,6 +23,8 @@
 #include <fstream>
 #include <queue>
 #include <mutex>
+#include <filesystem>
+namespace fs = std::filesystem;
 
 GlobalOptimization globalEstimator;
 ros::Publisher pub_global_odometry, pub_global_path, pub_car;
@@ -30,6 +32,9 @@ nav_msgs::Path *global_path;
 double last_vio_t = -1;
 std::queue<sensor_msgs::NavSatFixConstPtr> gpsQueue;
 std::mutex m_buf;
+double gps_sync_tolerance;
+std::string output_path;
+std::string global_vio_path;
 
 void publish_car_model(double t, Eigen::Vector3d t_w_car, Eigen::Quaterniond q_w_car)
 {
@@ -93,9 +98,8 @@ void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
     vio_q.z() = pose_msg->pose.pose.orientation.z;
     globalEstimator.inputOdom(t, vio_t, vio_q);
 
-
     m_buf.lock();
-    while(!gpsQueue.empty())
+    while(ros::ok() && !gpsQueue.empty())
     {   
         // Tries to find a GPS measurement within ±10ms of the VIO timestamp.
         // If found and valid:
@@ -105,9 +109,8 @@ void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
         // This is why not every VIO pose gets fused into the global path — only those with synced GPS are used.
         sensor_msgs::NavSatFixConstPtr GPS_msg = gpsQueue.front();
         double gps_t = GPS_msg->header.stamp.toSec();
-        printf("vio t: %f, gps t: %f \n", t, gps_t);
-        // 10ms sync tolerance
-        if(gps_t >= t - 0.01 && gps_t <= t + 0.01)
+        // printf("vio t: %f, gps t: %f \n", t, gps_t);
+        if(gps_t >= t - gps_sync_tolerance && gps_t <= t + gps_sync_tolerance)
         {
             //printf("receive GPS with timestamp %f\n", GPS_msg->header.stamp.toSec());
             double latitude = GPS_msg->latitude;
@@ -123,10 +126,15 @@ void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
             gpsQueue.pop();
             break;
         }
-        else if(gps_t < t - 0.01)
+        else if(gps_t < t - gps_sync_tolerance)
             gpsQueue.pop();
-        else if(gps_t > t + 0.01)
+        else if(gps_t > t + gps_sync_tolerance)
             break;
+    }
+    if (!ros::ok()) {
+        // we’re shutting down
+        m_buf.unlock();
+        return;      // or throw / otherwise abort callback
     }
     m_buf.unlock();
 
@@ -157,7 +165,7 @@ void vio_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
 
 
     // write result to file
-    std::ofstream foutC("/home/tony-ws1/output/vio_global.csv", ios::app);
+    std::ofstream foutC("/home/siyu/ros_ws/output/flomuss/2025-05-20-11-44-51/vio_global.csv", ios::app);
     foutC.setf(ios::fixed, ios::floatfield);
     foutC.precision(0);
     foutC << pose_msg->header.stamp.toSec() * 1e9 << ",";
@@ -177,13 +185,27 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "globalEstimator");
     ros::NodeHandle n("~");
 
+    n.param<double>("gps_sync_tolerance", gps_sync_tolerance, 0.05);
+    n.param<std::string>("output_path", output_path, std::string("/tmp"));
+    ROS_INFO("output_path: %s", output_path.c_str());
+    ROS_INFO("gps_sync_tolerance: %.3f", gps_sync_tolerance);
+
+    fs::path output_path_fs(output_path);
+    if (!fs::exists(output_path_fs)) {
+        fs::create_directories(output_path_fs);
+    }
+    global_vio_path = (output_path_fs / "vio_global.csv").string();
+
     global_path = &globalEstimator.global_path;
 
-    ros::Subscriber sub_GPS = n.subscribe("/gps", 100, GPS_callback);
+    ros::Subscriber sub_GPS = n.subscribe("/gnss/fix", 100, GPS_callback);
     ros::Subscriber sub_vio = n.subscribe("/vins_estimator/odometry", 100, vio_callback);
     pub_global_path = n.advertise<nav_msgs::Path>("global_path", 100);
     pub_global_odometry = n.advertise<nav_msgs::Odometry>("global_odometry", 100);
     pub_car = n.advertise<visualization_msgs::MarkerArray>("car_model", 1000);
+
     ros::spin();
+
+    globalEstimator.shutdown();
     return 0;
 }
